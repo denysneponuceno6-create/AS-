@@ -1,0 +1,134 @@
+# =====================================================================
+#  AS Seguros & Consórcios — .htaccess (Apache / HostGator)
+#
+#  Site estático (sem PHP e sem banco de dados). Este arquivo:
+#   1. força HTTPS e o endereço oficial https://asseguroseconsorcios.com.br
+#   2. recusa pedidos que um site estático nunca recebe (métodos, arquivos
+#      sensíveis, robôs de invasão, tentativas de injeção)
+#   3. envia cabeçalhos de segurança (CSP, anti-clickjacking, HSTS…)
+#   4. comprime e guarda em cache o que pode ser guardado
+#
+#  DDoS: nenhuma regra aqui segura um ataque de volume — ele precisa ser
+#  barrado antes de chegar na hospedagem. Use o Cloudflare na frente do site.
+# =====================================================================
+
+Options -Indexes
+DirectoryIndex index.html
+ErrorDocument 404 /404.html
+ErrorDocument 403 /404.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # a página de erro passa direto (evita erro dentro do erro)
+  RewriteRule ^404\.html$ - [L]
+
+  # --- 1. Endereço oficial: sempre https://asseguroseconsorcios.com.br ---
+  #        (.well-known fica fora: a validação do SSL da HostGator usa http;
+  #         X-Forwarded-Proto evita laço quando o Cloudflare já está em https)
+  RewriteCond %{REQUEST_URI} !^/\.well-known/
+  RewriteCond %{HTTP_HOST} ^www\.asseguroseconsorcios\.com\.br$ [NC]
+  RewriteRule ^ https://asseguroseconsorcios.com.br%{REQUEST_URI} [R=301,L]
+
+  RewriteCond %{REQUEST_URI} !^/\.well-known/
+  RewriteCond %{HTTP_HOST} ^asseguroseconsorcios\.com\.br$ [NC]
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://asseguroseconsorcios.com.br%{REQUEST_URI} [R=301,L]
+
+  # /index.html -> /  (um endereço só para a página, bom para o Google)
+  RewriteCond %{THE_REQUEST} ^[A-Z]+\s/+index\.html[\s?] [NC]
+  RewriteRule ^index\.html$ / [R=301,L]
+
+  # --- 2. Métodos: um site estático só precisa de GET e HEAD -----------
+  RewriteCond %{REQUEST_METHOD} !^(GET|HEAD)$
+  RewriteRule ^ - [F,L]
+
+  # --- 3. Arquivos e pastas ocultos (.git, .env…), exceto .well-known ---
+  #        (.well-known é usada pela HostGator para renovar o SSL)
+  RewriteRule (^|/)\.(?!well-known(/|$)) - [F,L]
+
+  # --- 4. Endereços que robôs de invasão testam (WordPress, painéis) ----
+  RewriteRule ^(wp-|xmlrpc\.php|phpmyadmin|pma/|myadmin|administrator|boaform|cgi-bin/) - [F,L,NC]
+
+  # --- 5. Tentativas de injeção pela URL (XSS, SQL, leitura de arquivos) -
+  RewriteCond %{QUERY_STRING} (<|%3C)(\s|%20)*/?(\s|%20)*(script|iframe|object|embed|svg) [NC,OR]
+  RewriteCond %{QUERY_STRING} (\.\./|\.\.%2f|%2e%2e(/|%2f)) [NC,OR]
+  RewriteCond %{QUERY_STRING} (union(\s|\+|%20)+(all(\s|\+|%20)+)?select|information_schema|(sleep|benchmark|concat|eval)(\(|%28)) [NC,OR]
+  RewriteCond %{QUERY_STRING} (base64_(en|de)code|globals(=|\[|%5b)|_request(=|\[|%5b)|etc/passwd|proc/self/environ|php://|file://) [NC]
+  RewriteRule ^ - [F,L]
+
+  # --- 6. Ferramentas de ataque, varredura e cópia de site --------------
+  #        (copiadores de site são usados para montar páginas falsas)
+  RewriteCond %{REQUEST_URI} !^/\.well-known/
+  RewriteCond %{HTTP_USER_AGENT} (sqlmap|nikto|nmap|masscan|zgrab|nuclei|acunetix|netsparker|wpscan|dirbuster|gobuster|feroxbuster|ffuf|havij|w3af|fimap|jorgee|zmeu|morfeus|openvas|commix|whatweb|httrack|webcopier|webzip|sitesucker|offline\s?explorer) [NC,OR]
+  RewriteCond %{HTTP_USER_AGENT} ^-?$
+  RewriteRule ^ - [F,L]
+</IfModule>
+
+# --- Arquivos que nunca devem ser baixados (backups, configurações, código)
+#     Se um dia instalar WordPress/PHP nesta pasta, tire "php" desta lista.
+<FilesMatch "(?i)\.(bak|backup|old|orig|save|swp|tmp|sql|sqlite|db|mdb|log|ini|conf|cfg|env|sh|bash|py|rb|pl|cgi|php\d?|phtml|phar|asp|aspx|jsp|git|svn|lock|yml|yaml|toml|md|zip|rar|7z|tar|gz|tgz|psd|ai)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+<FilesMatch "(?i)^(composer\.(json|lock)|package(-lock)?\.json|web\.config|error_log|readme\.html|license\.txt)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# --- Cabeçalhos de segurança -----------------------------------------
+<IfModule mod_headers.c>
+  # só HTTPS por 1 ano (a HostGator renova o SSL sozinha)
+  Header always set Strict-Transport-Security "max-age=31536000"
+  # o navegador não "adivinha" tipo de arquivo
+  Header always set X-Content-Type-Options "nosniff"
+  # ninguém coloca o site dentro de outro (clickjacking / página falsa)
+  Header always set X-Frame-Options "DENY"
+  # links externos não recebem o endereço completo da página
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  # recursos do aparelho que o site não usa ficam desligados
+  Header always set Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set X-Permitted-Cross-Domain-Policies "none"
+  # CSP: só roda script deste site, do GSAP e do Three.js (versões fixas);
+  # o formulário só envia para o FormSubmit; o mapa só vem do Google.
+  # Ao trocar um endereço externo (CDN, mapa, formulário), atualize aqui.
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-JUyjjg/YHhiiuB9fcYQGSqBW+zzwxnp6l2EQpg1E/Pw=' https://cdn.jsdelivr.net/npm/gsap@3.12.5/ https://cdn.jsdelivr.net/npm/three@0.160.0/ https://unpkg.com/three@0.160.0/; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://images.unsplash.com; connect-src 'self' https://formsubmit.co; frame-src https://maps.google.com https://www.google.com; form-action 'self' https://formsubmit.co; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests"
+  Header always unset X-Powered-By
+  Header unset X-Powered-By
+
+  # cache: página sempre confere se há versão nova; scripts e imagens
+  # levam ?v= no endereço (mudou o arquivo, mude o número no index.html)
+  <FilesMatch "\.(html|xml|txt)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(js|css)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+  <FilesMatch "\.(webp|avif|png|jpe?g|gif|svg|ico)$">
+    Header set Cache-Control "public, max-age=2592000"
+  </FilesMatch>
+</IfModule>
+
+# --- Tipos de arquivo e compressão -------------------------------------
+<IfModule mod_mime.c>
+  AddType image/webp .webp
+  AddType text/javascript .js
+  AddCharset utf-8 .html .css .js .xml .txt
+</IfModule>
+<IfModule mod_deflate.c>
+  <IfModule mod_filter.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml application/xml text/javascript application/javascript application/json application/ld+json image/svg+xml
+  </IfModule>
+</IfModule>
